@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  format:
+    name: formatting
+    runs-on: arc-runner-set
+    container:
+      image: ghcr.io/terrapkg/builder:f45
+    env:
+      # keep in sync with the ormolu in ~/.local/bin, which Zed formats with.
+      # the hash is the digest GitHub publishes for the release asset
+      ORMOLU_VERSION: "0.9.0.0"
+      ORMOLU_SHA256: "367eb4969986504cf171f71f91e24ea5d7d9d97c41701e8e6eef9b642fd0d201"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # not haskell-actions/run-ormolu: v21 downloads from the old
+      # mrkkrp/ormolu repo, which is gone, and reports the 404 as
+      # "unformatted files"
+      - name: Install ormolu
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$ORMOLU_VERSION" --repo tweag/ormolu --pattern ormolu-x86_64-linux.zip --dir "$RUNNER_TEMP"
+          echo "$ORMOLU_SHA256  $RUNNER_TEMP/ormolu-x86_64-linux.zip" | sha256sum --check --strict
+          unzip -q -d "$RUNNER_TEMP/ormolu" "$RUNNER_TEMP/ormolu-x86_64-linux.zip"
+          echo "$RUNNER_TEMP/ormolu" >> "$GITHUB_PATH"
+
+      # fix locally with: ormolu --mode inplace $(git ls-files '*.hs')
+      # the container's checkout belongs to another user, so git needs it marked safe.
+      # ormolu waits on stdin when given no files, so an empty list fails instead
+      - name: Check formatting
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mapfile -d '' files < <(git ls-files -z '*.hs')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no Haskell files found, refusing to pass"
+            exit 1
+          fi
+          ormolu --mode check --check-idempotence "${files[@]}"
+
+  build:
+    name: build and test (${{ matrix.name }} libraries)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Fedora
+            image: f45
+          - name: EPEL 10
+            image: el10
+    container:
+      image: ghcr.io/terrapkg/builder:${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          dnf -y -q install cabal-install
+          dnf -y -q builddep ghc-rozbir.spec
+
+      - name: Configure
+        run: |
+          : > "$RUNNER_TEMP/cabal-config"
+          echo "CABAL_CONFIG=$RUNNER_TEMP/cabal-config" >> "$GITHUB_ENV"
+          printf 'package rozbir\n  ghc-options: -Werror\n' > cabal.project.local
+
+      - name: Build
+        run: cabal build all --enable-tests
+
+      - name: Test
+        run: cabal test all --test-show-details=direct
+
+      - name: Check the package
+        run: cabal check
+
+  hackage:
+    name: build and test (Hackage, from sdist)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/terrapkg/builder:f45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ghc and cabal
+        run: dnf5 -y -q install ghc cabal-install zlib-ng-compat-devel
+
+      - name: Unpack the sdist
+        id: sdist
+        run: |
+          cabal update
+          cabal sdist -o "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP"/rozbir-*.tar.gz -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"/rozbir-*/
+          echo "SDIST_DIR=$PWD" >> "$GITHUB_ENV"
+          printf 'packages: .\n' > cabal.project
+          printf 'package rozbir\n  ghc-options: -Werror\n' > cabal.project.local
+          cabal build all --enable-tests --dry-run
+          echo "plan=$(sha256sum dist-newstyle/cache/plan.json | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cabal store
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/state/cabal/store
+          key: hackage-${{ steps.sdist.outputs.plan }}
+          restore-keys: hackage-
+
+      - name: Build dependencies
+        working-directory: ${{ env.SDIST_DIR }}
+        run: cabal build all --enable-tests --only-dependencies
+
+      - name: Save cabal store
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/state/cabal/store
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Build and test
+        working-directory: ${{ env.SDIST_DIR }}
+        run: |
+          cabal build all --enable-tests
+          cabal test all --test-show-details=direct

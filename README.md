@@ -6,4 +6,4 @@ this is intended to parse and lint RPM Spec files for Haskell projects. namely, 
 
 ## license
 
-this project is licensed under AGPL-3.0-or-later. see [LICENSE.md](LICENSE.md).
+this project is licensed under GPL-3.0-or-later. see [LICENSE.md](LICENSE.md).

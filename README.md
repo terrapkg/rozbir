@@ -5,7 +5,7 @@
 rozbir parses, evaluates, edits and lints RPM spec files without running
 anything: no `rpmspec`, no shell, no Lua. it was written for
 [oglyad](https://github.com/terrapkg/oglyad), and
-[terralint](https://github.com/terrapkg/terralint) builds a CLI and language
+[korektor](https://github.com/terrapkg/korektor) builds a CLI and language
 server on it. see [ARCHITECTURE.md](ARCHITECTURE.md) for how it works.
 
 ```haskell
@@ -31,7 +31,6 @@ main = do
   bconds, BuildRequires, and which macros feed `Version:`
 - `Rozbir.Edit` sets tags and macros, bumps Release and adds changelog entries
   as minimal text edits
-- `Rozbir.Format` aligns tags and tidies whitespace without changing meaning
 - `Rozbir.Lint` runs the core, rpmlint and (opt-in) terra rulesets. a comment
   like `# rozbir: ignore[hardcoded-path] reason` suppresses a finding on the
   next line, and `# rozbir: ignore-file[rule]` for the whole spec

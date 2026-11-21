@@ -58,7 +58,6 @@ library
     Rozbir.Eval.LuaPattern
     Rozbir.Eval.Shell
     Rozbir.Eval.Types
-    Rozbir.Format
     Rozbir.IO
     Rozbir.Lint
     Rozbir.Lint.Core
@@ -94,7 +93,6 @@ test-suite rozbir-test
     EditSpec
     EvalSpec
     ExprSpec
-    FormatSpec
     LintSpec
     ParseSpec
     QuerySpec

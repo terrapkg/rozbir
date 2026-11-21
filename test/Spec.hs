@@ -3,7 +3,6 @@ module Main (main) where
 import EditSpec qualified
 import EvalSpec qualified
 import ExprSpec qualified
-import FormatSpec qualified
 import LintSpec qualified
 import ParseSpec qualified
 import QuerySpec qualified
@@ -20,7 +19,6 @@ main = hspec $ do
   ShellSpec.spec
   QuerySpec.spec
   EditSpec.spec
-  FormatSpec.spec
   LintSpec.spec
   VersionSpec.spec
   TotalitySpec.spec

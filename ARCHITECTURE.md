@@ -1,11 +1,11 @@
 # rozbir architecture
 
 status: milestones 1 to 6 are built in rozbir, 7 and 8 have a first version in
-terralint. "as built" notes below mark where the code differs from the plan.
+korektor. "as built" notes below mark where the code differs from the plan.
 
 rozbir is a pure Haskell library that parses, evaluates, edits and lints RPM
 spec files. it never runs anything: no `rpmspec`, no shell, no Lua. the CLI,
-language server and editor plugins live in [terralint](../terralint) and
+language server and editor plugins live in [korektor](../korektor) and
 depend on rozbir like any other consumer, oglyad included.
 
 ## goals
@@ -30,7 +30,7 @@ depend on rozbir like any other consumer, oglyad included.
 
 - replacing `rpmspec` completely. no Lua interpreter, no shell
 - building or reading binary rpms ([codec-rpm](https://hackage.haskell.org/package/codec-rpm) does that)
-- formatting (maybe later, through `Edit`)
+- formatting. that's a separate project
 
 ## layers
 
@@ -200,7 +200,7 @@ model covers everything the spec could be for that target.
 
 ### `Rozbir.Query`
 
-the small, stable API oglyad and terralint use:
+the small, stable API oglyad and korektor use:
 
 - `name`, `evr :: Spec -> Resolved EVR`, with `Resolved` being either fully
   `Known` or the reasons it isn't
@@ -273,7 +273,7 @@ because it's spec syntax:
 an `ignore` covers its own line or the next one. a directive that no longer
 suppresses anything is itself reported, like oglyad's `unused-ignore`.
 
-the config file and `anda.hcl` labels are read by terralint, which turns
+the config file and `anda.hcl` labels are read by korektor, which turns
 them into a `LintConfig`, since finding them is IO.
 
 as built:
@@ -301,7 +301,6 @@ Rozbir.Spec            semantic model + resolve
 Rozbir.Query
 Rozbir.Version
 Rozbir.Edit
-Rozbir.Format          tag alignment and whitespace, as one edit
 Rozbir.Eval.Shell      the pure sh/sed/tr/cut subset
 Rozbir.Eval.LuaPattern Lua 5.4 patterns for %{gsub}
 Rozbir.Lint            runLint, suppression directives
@@ -314,7 +313,7 @@ Rozbir.IO              readSpec, resolveIncludes, loadSystemMacros
 
 dependencies: `base`, `text`, `bytestring`, `containers`, `mtl`, `deepseq`,
 `time` for changelog dates, `directory` and `filepath` for `Rozbir.IO`, and
-`aeson` for `ToJSON` on diagnostics, which both terralint and oglyad print.
+`aeson` for `ToJSON` on diagnostics, which both korektor and oglyad print.
 no `process`, so nothing in rozbir can run a command.
 
 ## testing
@@ -334,8 +333,6 @@ no `process`, so nothing in rozbir can run a command.
   commands like `date` (8)
 - **totality**: QuickCheck runs parse, resolve, every lint rule, every fix and
   every edit over generated and arbitrary text. 60k cases pass without a crash
-- **format corpus**: `dev/FormatCorpus.hs` checks the formatter is idempotent
-  and leaves every evaluated tag unchanged over the whole corpus
 - **lint corpus**: `dev/LintCorpus.hs` counts findings per rule over a
   checkout, which is how false positives get found
 - **rules**: one small spec per rule showing what it catches and what it
@@ -343,31 +340,31 @@ no `process`, so nothing in rozbir can run a command.
 
 the suite uses hspec and QuickCheck, like oglyad's.
 
-## terralint (separate repo)
+## korektor (separate repo)
 
 ```
-terralint lint [paths] [--ruleset terra] [--target f44] [--format text|json|sarif|github]
-terralint lsp          # stdio
+korektor lint [paths] [--ruleset terra] [--target f44] [--format text|json|sarif|github]
+korektor lsp          # stdio
 ```
 
-- **config**, from weakest to strongest: defaults, then `terralint.toml` at
+- **config**, from weakest to strongest: defaults, then `korektor.toml` at
   the repo root (found by walking up, parsed with `toml-parser`, which Fedora
   ships), then `anda.hcl` labels in the spec's dir
-  (`terralint_ignore = "rule, rule"`, consistent with `oglyad_ignore`), then
+  (`korektor_ignore = "rule, rule"`, consistent with `oglyad_ignore`), then
   the in-spec directives, then CLI flags
 - **exit codes** like oglyad's: 0 clean, 1 findings at or above `--fail-on`,
   2 couldn't run
-- as built: `terralint.toml` takes `rulesets`, `fail-on`, `system-macros`,
+- as built: `korektor.toml` takes `rulesets`, `fail-on`, `system-macros`,
   `targets`, a `[rules]` table (`"off"` or a severity) and `[target.NAME]`
   tables with `arch` and `macros` (`false` undefines). `fNN`, `elNN` and
   `rawhide` are built-in targets with an optional `:arch`. with no targets it
   lints one unknown target, which answers the last open question below the
-  way this doc recommended. `--fix` applies safe fixes, and `terralint rules`
+  way this doc recommended. `--fix` applies safe fixes, and `korektor rules`
   lists every rule. the LSP also offers "ignore this rule on this line" as a
   quick fix. with `ghc-lsp-types` and `ghc-regex` now in Terra, `ghc-lsp`,
   `ghc-co-log-core`, `ghc-sorted-list` and `ghc-text-rope` are the only
   missing packages, and their cabal-rpm specs are in
-  `terralint/packaging/terra`
+  `korektor/packaging/terra`
 - **LSP** is built on [`lsp`](https://hackage.haskell.org/package/lsp) 2.8 and
   [`lsp-types`](https://hackage.haskell.org/package/lsp-types) 2.4, which
   Fedora doesn't ship, so `ghc-lsp`, `ghc-lsp-types` and whatever else they
@@ -376,7 +373,7 @@ terralint lsp          # stdio
   expands to per target, go to definition for macros, document symbols for
   sections and subpackages, and completion for tags, sections and macros.
   semantic tokens come from the CST
-- **Zed**: our own wasm extension that launches `terralint lsp`, with
+- **Zed**: our own wasm extension that launches `korektor lsp`, with
   highlighting from [cryptomilk/tree-sitter-rpmspec](https://gitlab.com/cryptomilk/tree-sitter-rpmspec).
   the existing [rpmspec extension](https://zed.dev/extensions/rpmspec)
   ([source](https://github.com/mtorromeo/zed-rpmspec-language)) wraps a
@@ -403,16 +400,6 @@ oglyad stays deliberately library-less. rozbir is an ordinary external
 package, so oglyad's spec just gains `BuildRequires: ghc-rozbir-devel`, and
 packages-el needs it too for EL10.
 
-## formatting
-
-as built: `Rozbir.Format` does only what can't change meaning. it aligns tag
-values to the column most of the spec's tags already use (and does nothing
-when there's no clear majority or the tags use tabs), strips trailing
-whitespace except after a continuation backslash, squashes runs of more than
-two blank lines, and ends the file with one newline. over the corpus it
-changes 545 of 2468 specs, is idempotent, and leaves every evaluated tag the
-same. terralint exposes it as `terralint fmt` and LSP formatting.
-
 ## milestones
 
 1. scaffolding: cabal layout matching oglyad, CI, ormolu
@@ -421,15 +408,15 @@ same. terralint exposes it as `terralint fmt` and LSP formatting.
 4. `Eval`, `Spec` and `Query`, plus the differential test and oglyad's shadow mode
 5. `Edit`
 6. lint core, rpmlint rules and directives
-7. terralint CLI and config
+7. korektor CLI and config
 8. `ghc-lsp` packaging, the LSP server, and the Zed and JetBrains plugins
 9. the Terra ruleset
 
 ## open questions
 
-- the name. terralint is generic and the Terra rules are opt-in
+- the name. korektor is generic and the Terra rules are opt-in
 - which Terra conventions go in the terra ruleset
 - should oglyad grow a `spec-lint` check that runs the core and terra
-  rulesets in the nightly report, or leave linting to terralint
+  rulesets in the nightly report, or leave linting to korektor
 - should hover and diagnostics default to every maintained release as a
   target (like oglyad), or to one "unknown" target with three-valued `%if`

@@ -108,7 +108,7 @@ This package provides the Haskell %{pkg_name} profiling library.
 
 
 %files devel -f %{name}-devel.files
-%doc ARCHITECTURE.md CHANGELOG.md README.md
+%doc CHANGELOG.md README.md
 
 
 %if %{with haddock}

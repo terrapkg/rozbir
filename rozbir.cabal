@@ -16,7 +16,6 @@ author:          Cypress Reed
 maintainer:      cypress@fyralabs.com
 build-type:      Simple
 extra-doc-files:
-  ARCHITECTURE.md
   CHANGELOG.md
   README.md
 

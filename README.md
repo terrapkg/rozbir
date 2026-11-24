@@ -6,7 +6,7 @@ rozbir parses, evaluates, edits and lints RPM spec files without running
 anything: no `rpmspec`, no shell, no Lua. it was written for
 [oglyad](https://github.com/terrapkg/oglyad), and
 [korektor](https://github.com/terrapkg/korektor) builds a CLI and language
-server on it. see [ARCHITECTURE.md](ARCHITECTURE.md) for how it works.
+server on it.
 
 ```haskell
 import Rozbir

@@ -1,3 +1,5 @@
+-- | answers to common questions about a spec: name, EVR, sources, patches,
+-- bconds, dependencies and which macros feed @Version:@.
 module Rozbir.Query
   ( Resolved (..),
     resolvedToMaybe,
@@ -33,9 +35,13 @@ import Rozbir.Syntax
 import Rozbir.Version (EVR (..))
 import Text.Read (readMaybe)
 
+-- | an answer, or the reasons it couldn't be worked out
 data Resolved a
-  = Resolved a
-  | Unresolved [Reason]
+  = -- | the value is known
+    Resolved a
+  | -- | the value depends on something rozbir can't evaluate, is missing, or
+    -- differs between branches
+    Unresolved [Reason]
   deriving stock (Eq, Show, Functor, Generic)
 
 instance Applicative Resolved where
@@ -45,11 +51,14 @@ instance Applicative Resolved where
   Unresolved a <*> _ = Unresolved a
   _ <*> Unresolved b = Unresolved b
 
+-- | drop the reasons
 resolvedToMaybe :: Resolved a -> Maybe a
 resolvedToMaybe = \case
   Resolved a -> Just a
   Unresolved _ -> Nothing
 
+-- | a tag's text. 'Unresolved' if it's missing, didn't fully expand, or is
+-- set to different values in different branches.
 tagText :: Text -> Package -> Resolved Text
 tagText key pkg = case packageTags key pkg of
   [] -> Unresolved [Undefined key]
@@ -61,12 +70,15 @@ tagText key pkg = case packageTags key pkg of
           (_, unknowns@(_ : _)) -> Unresolved (concatMap reasons unknowns)
           _ -> Unresolved [Ambiguous key]
 
+-- | the main package's Name
 name :: Spec -> Resolved Text
 name spec = maybe (Unresolved [Undefined "name"]) (tagText "name") (mainPackage spec)
 
+-- | the main package's Version
 version :: Spec -> Resolved Text
 version spec = maybe (Unresolved [Undefined "version"]) (tagText "version") (mainPackage spec)
 
+-- | the main package's epoch, version and release. epoch defaults to 0.
 evr :: Spec -> Resolved EVR
 evr spec = case mainPackage spec of
   Nothing -> Unresolved [Undefined "name"]
@@ -83,6 +95,8 @@ evr spec = case mainPackage spec of
       Resolved a -> f a
       Unresolved rs -> Unresolved rs
 
+-- | names of macros referenced in fragments, including inside arguments,
+-- @%(...)@ and @%[...]@
 macroReferences :: [Frag] -> [Name]
 macroReferences = concatMap frag
   where
@@ -99,6 +113,7 @@ macroReferences = concatMap frag
       ColonArg fs -> macroReferences fs
       SpaceArg fs -> macroReferences fs
 
+-- | every @%global@ and @%define@ by name, in source order
 definitions :: Tree -> Map Name [DefineLine]
 definitions tree =
   Map.fromListWith
@@ -108,6 +123,8 @@ definitions tree =
       defKind d `elem` [DefGlobal, DefDefine]
     ]
 
+-- | macros that @Version:@ depends on through @%global@ and @%define@,
+-- skipping rpm builtins
 versionInputs :: Tree -> [Name]
 versionInputs tree = go [] roots
   where
@@ -127,18 +144,24 @@ versionInputs tree = go [] roots
             let more = concatMap (macroReferences . defBody) (Map.findWithDefault [] n defs)
              in go (n : seen) (rest <> more)
 
+-- | every package except the main one
 subpackages :: Spec -> [Package]
 subpackages = filter ((/= MainKey) . pkgKey) . specPackages
 
+-- | Source tags
 sources :: Spec -> [Located SourceEntry]
 sources = filter (not . srcPatch . locValue) . specSources
 
+-- | Patch tags
 patches :: Spec -> [Located SourceEntry]
 patches = filter (srcPatch . locValue) . specSources
 
+-- | bcond declarations
 bconds :: Spec -> [Located Bcond]
 bconds = specBconds
 
+-- | one entry per dependency in a tag such as @requires@. values that didn't
+-- fully expand are skipped.
 dependencies :: Text -> Package -> [Located Text]
 dependencies key pkg =
   [ Located dep (locSpan l) (locGuard l)
@@ -147,9 +170,12 @@ dependencies key pkg =
     dep <- splitDeps t
   ]
 
+-- | the main package's BuildRequires, one entry per dependency
 buildRequires :: Spec -> [Located Text]
 buildRequires spec = maybe [] (dependencies "buildrequires") (mainPackage spec)
 
+-- | split a dependency list on spaces and commas, keeping @foo >= 1.0@ and
+-- rich dependencies in parentheses together
 splitDeps :: Text -> [Text]
 splitDeps = join . tokens
   where

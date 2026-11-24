@@ -1,3 +1,5 @@
+-- | reading specs and rpm macro files from disk. this is the only module in
+-- rozbir that does IO.
 module Rozbir.IO
   ( readSpec,
     readSpecText,
@@ -26,12 +28,17 @@ import Rozbir.Syntax.Render (renderFrags)
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath (isAbsolute, takeDirectory, takeFileName, (</>))
 
+-- | read a file as UTF-8, replacing invalid bytes
 readSpecText :: FilePath -> IO Text
 readSpecText path = decodeUtf8Lenient <$> BS.readFile path
 
+-- | read and parse a spec
 readSpec :: FilePath -> IO Tree
 readSpec path = parse <$> readSpecText path
 
+-- | read the @%include@ files a spec uses, relative to the spec's directory,
+-- for 'Rozbir.Spec.roIncludes'. files that are missing, unreadable or named
+-- with a macro are left out.
 resolveIncludes :: FilePath -> Tree -> IO (Map Text Tree)
 resolveIncludes specPath = go (0 :: Int) Map.empty
   where
@@ -54,6 +61,8 @@ resolveIncludes specPath = go (0 :: Int) Map.empty
                 Right tree -> go (depth + 1) (Map.insert arg tree acc) tree
     includeArgs tree = [T.strip (renderFrags fs) | Line {lineBody = Include _ fs} <- treeLines tree]
 
+-- | rpm's macro file search path for a platform like @x86_64-linux@. entries
+-- can end in a @*@ glob.
 macroPath :: Text -> [FilePath]
 macroPath target =
   let t = T.unpack target
@@ -66,6 +75,8 @@ macroPath target =
         "/etc/rpm/" <> t <> "/macros"
       ]
 
+-- | load macro files on top of an environment, in order. later files win, and
+-- missing or unreadable files are skipped.
 loadMacroFiles :: [FilePath] -> Env -> IO Env
 loadMacroFiles patterns env0 = do
   files <- concat <$> mapM expandGlob patterns
@@ -95,5 +106,7 @@ expandGlob pat
     dir = takeDirectory pat
     name = takeFileName pat
 
+-- | load this system's rpm macros for an arch (default @x86_64@) into a
+-- closed environment, where undefined macros stay as text like in rpm
 loadSystemMacros :: Maybe Text -> IO Env
 loadSystemMacros arch = loadMacroFiles (macroPath (fromMaybe "x86_64" arch <> "-linux")) (newEnv True)

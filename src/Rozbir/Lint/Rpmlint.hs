@@ -1,3 +1,5 @@
+-- | rpmlint's spec checks, run on the parsed spec so they see every @%if@
+-- branch. on by default.
 module Rozbir.Lint.Rpmlint (rules) where
 
 import Data.Char (isSpace)
@@ -13,6 +15,7 @@ import Rozbir.Spec
 import Rozbir.Syntax
 import Rozbir.Syntax.Render (lineFrags, macroSpans, renderBody, renderFrags, renderMacro)
 
+-- | every rpmlint rule
 rules :: [Rule]
 rules =
   [ Rule "deprecated-tag" Rpmlint Warn "BuildRoot, Group, PreReq and BuildPreReq do nothing or have better spellings" deprecatedTag,

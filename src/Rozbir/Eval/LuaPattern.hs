@@ -1,3 +1,6 @@
+-- | a pure port of Lua 5.4's pattern matching, just enough for @%{gsub:...}@.
+-- captures, @%b@, @%f@ and back-references aren't supported, and no Lua is ever
+-- run.
 module Rozbir.Eval.LuaPattern
   ( luaGsub,
   )
@@ -114,6 +117,9 @@ matchHere items anchoredEnd s = case items of
       Just x : _ -> Just x
       Nothing : xs -> firstJust xs
 
+-- | Lua's @string.gsub@ on @[string, pattern, replacement]@ with an optional
+-- count, returning the new string. 'Left' names the unsupported feature or bad
+-- argument.
 luaGsub :: [Text] -> Either Text Text
 luaGsub = \case
   [s, p, r] -> run s p r Nothing

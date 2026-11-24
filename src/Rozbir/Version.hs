@@ -1,3 +1,4 @@
+-- | rpm versions: epoch, version and release, and rpm's rules for comparing them
 module Rozbir.Version
   ( EVR (..),
     parseEVR,
@@ -18,8 +19,10 @@ import Data.Text qualified as T
 import GHC.Generics (Generic)
 import Text.Read (readMaybe)
 
+-- | an epoch, version and release. 'compare' uses rpm's rules, while '==' compares the text.
 data EVR = EVR
-  { evrEpoch :: !Int,
+  { -- | the epoch, 0 when there is none
+    evrEpoch :: !Int,
     evrVersion :: !Text,
     evrRelease :: !Text
   }
@@ -29,6 +32,8 @@ data EVR = EVR
 instance Ord EVR where
   compare = compareEVR
 
+-- | parse @[epoch:]version-release@. an epoch of @(none)@ counts as 0.
+-- 'Nothing' when the epoch isn't a number or the version or release is missing.
 parseEVR :: Text -> Maybe EVR
 parseEVR raw = do
   let (epochPart, rest) = case T.breakOn ":" raw of
@@ -39,14 +44,17 @@ parseEVR raw = do
   ver <- T.stripSuffix "-" verDash
   if T.null ver || T.null rel then Nothing else Just (EVR epoch ver rel)
 
+-- | print an t'EVR', leaving out an epoch of 0
 renderEVR :: EVR -> Text
 renderEVR (EVR 0 v r) = v <> "-" <> r
 renderEVR (EVR e v r) = T.pack (show e) <> ":" <> v <> "-" <> r
 
+-- | compare by epoch, then version, then release
 compareEVR :: EVR -> EVR -> Ordering
 compareEVR (EVR e1 v1 r1) (EVR e2 v2 r2) =
   compare e1 e2 <> rpmvercmp v1 v2 <> rpmvercmp r1 r2
 
+-- | a port of rpm's @rpmvercmp@. @~@ sorts before anything, even the end of the string, and @^@ sorts after the end but before anything else.
 rpmvercmp :: Text -> Text -> Ordering
 rpmvercmp a b
   | a == b = EQ
@@ -84,14 +92,18 @@ rpmvercmp a b
     isAlpha c = isAsciiLower c || isAsciiUpper c
     isSep c = not (isDigit c || isAlpha c || c == '~' || c == '^')
 
+-- | a version from a @v\"...\"@ literal in an expression
 data VersionLiteral = VersionLiteral
-  { vlEpoch :: !(Maybe Integer),
+  { -- | the epoch, if one was given
+    vlEpoch :: !(Maybe Integer),
     vlVersion :: !Text,
+    -- | the release, if one was given
     vlRelease :: !(Maybe Text)
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | parse @[epoch:]version[-release]@. 'Nothing' when the version is empty.
 parseVersionLiteral :: Text -> Maybe VersionLiteral
 parseVersionLiteral raw = do
   let (digits, afterDigits) = T.span isDigit raw
@@ -103,6 +115,7 @@ parseVersionLiteral raw = do
         (verDash, rel) -> (T.dropEnd 1 verDash, Just rel)
   if T.null version then Nothing else Just (VersionLiteral epoch version release)
 
+-- | compare like rpm does in expressions. a missing epoch counts as 0, and releases are only compared when both sides have one.
 compareVersionLiteral :: VersionLiteral -> VersionLiteral -> Ordering
 compareVersionLiteral a b =
   compare (maybe 0 id (vlEpoch a)) (maybe 0 id (vlEpoch b))

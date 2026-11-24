@@ -1,5 +1,11 @@
+-- | a pure interpreter for the small subset of sh that specs use in @%(...)@:
+-- variable assignments, @echo@, simple @printf@, @${v:o:l}@-style expansions,
+-- here-strings, and pipes into @sed@ substitutions, @tr@ and @cut@. it never
+-- runs a shell. anything outside the subset is rejected so the caller can
+-- leave it opaque.
 module Rozbir.Eval.Shell
   ( runShell,
+    Unsupported,
     sedScript,
     trText,
     Regex,
@@ -18,6 +24,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Text.Read (readMaybe)
 
+-- | why a script was rejected, such as the command or syntax it doesn't support
 type Unsupported = Text
 
 data Part
@@ -36,6 +43,9 @@ type Word' = [Part]
 
 data Token = TWord Word' | TPipe | TSep | THere
 
+-- | run a script and return its output with trailing newlines trimmed, like
+-- @%(...)@. 'Left' names the first unsupported feature, including reading a
+-- variable the script didn't set.
 runShell :: Text -> Either Unsupported Text
 runShell src = do
   toks <- tokenize (T.unpack src)
@@ -318,6 +328,9 @@ sedRun ere scripts input = do
   out <- mapM (\l -> foldM (\acc c -> c acc) l cmds) body
   pure (T.intercalate "\n" out <> if trailing then "\n" else "")
 
+-- | parse a sed script into one function per command, each applied to a line.
+-- only @s@ commands with an optional @g@ flag are supported. 'True' means
+-- extended regexes, like @sed -E@.
 sedScript :: Bool -> Text -> Either Unsupported [Text -> Either Unsupported Text]
 sedScript ere = go . T.unpack
   where
@@ -386,8 +399,12 @@ data Atom
 
 data Piece = Piece Atom Int (Maybe Int)
 
+-- | a parsed sed regex. only single characters, @.@, bracket expressions,
+-- quantifiers and anchors are supported, without groups, alternation,
+-- intervals or back-references.
 data Regex = Regex Bool [Piece] Bool
 
+-- | parse a basic regex, or an extended one when the flag is 'True'
 parseRegex :: Bool -> Text -> Either Unsupported Regex
 parseRegex ere t0 = do
   let s0 = T.unpack t0
@@ -471,6 +488,8 @@ matchEnds pieces anchoredEnd = go pieces 0
           counts = [k | k <- [available, available - 1 .. lo], k >= lo]
        in concat [go rest (n + k) (drop k s) | k <- counts]
 
+-- | the length of the longest match at the start of the string, or 'Nothing'.
+-- this ignores a @^@ anchor.
 matchLongest :: Regex -> String -> Maybe Int
 matchLongest (Regex _ pieces anchoredEnd) s = case matchEnds pieces anchoredEnd s of
   [] -> Nothing
@@ -494,6 +513,8 @@ trArgs args input = case args of
   [a, b] | not ("-" `T.isPrefixOf` a) -> trText a b input
   _ -> Left "tr options"
 
+-- | @tr a b@ on some input. like GNU tr, a short second set repeats its last
+-- character.
 trText :: Text -> Text -> Text -> Either Unsupported Text
 trText a b input = do
   from <- trSet a

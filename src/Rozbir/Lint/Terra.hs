@@ -1,3 +1,5 @@
+-- | Terra's packaging conventions, such as a Packager tag and a Version that
+-- @update.rhai@ can change. off unless the terra ruleset is enabled.
 module Rozbir.Lint.Terra (rules) where
 
 import Data.Char (isDigit)
@@ -10,6 +12,7 @@ import Rozbir.Query (definitions, macroReferences)
 import Rozbir.Syntax
 import Rozbir.Syntax.Render (lineFrags, macroSpans, renderFrags)
 
+-- | every Terra rule
 rules :: [Rule]
 rules =
   [ Rule "terra-packager" Terra Info "Terra credits whoever maintains a package with a Packager tag" packager,

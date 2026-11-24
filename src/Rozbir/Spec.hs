@@ -1,3 +1,5 @@
+-- | the semantic model of a spec for one build target. when an @%if@ can't
+-- be decided, both branches end up in the model, tagged with a 'Guard'.
 module Rozbir.Spec
   ( Spec (..),
     Package (..),
@@ -44,108 +46,173 @@ import Rozbir.Syntax.Parse (parseFrags, parseLines)
 import Rozbir.Syntax.Render (renderBody)
 import Text.Read (readMaybe)
 
+-- | the item is in one branch of an @%if@ that couldn't be decided
 data Assumption = Assumption
-  { assumeIf :: !Span,
+  { -- | span of the @%if@ line that opens the block
+    assumeIf :: !Span,
+    -- | branch index, 0 for the @%if@, then one per @%elif@ or @%else@
     assumeBranch :: !Int
   }
   deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (NFData)
 
+-- | the undecided @%if@ branches an item is in, innermost first. empty means
+-- it always applies.
 type Guard = [Assumption]
 
+-- | a value with the source span it came from and the guard it's under
 data Located a = Located
   { locValue :: !a,
+    -- | span of the line it came from
     locSpan :: !Span,
+    -- | the undecided branches it's in
     locGuard :: !Guard
   }
   deriving stock (Eq, Show, Generic, Functor)
   deriving anyclass (NFData)
 
-data PackageKey = MainKey | SubKey !Text
+-- | identifies a package within a t'Spec'
+data PackageKey
+  = -- | the main package
+    MainKey
+  | -- | a subpackage, keyed by its full expanded name such as @foo-devel@
+    SubKey !Text
   deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (NFData)
 
+-- | a preamble tag after macro expansion
 data TagEntry = TagEntry
-  { teKey :: !Text,
+  { -- | lowercase name without a Source or Patch number, so @Source0@ is
+    -- @source@
+    teKey :: !Text,
+    -- | the tag name as written
     teName :: !Text,
+    -- | the qualifier as written, such as @(post)@ in @Requires(post)@
     teQualifier :: !(Maybe Text),
+    -- | the expanded value
     teValue :: !Value,
+    -- | the original line, or Nothing when a macro expanded to this tag
     teRaw :: !(Maybe TagLine)
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | the main package or a @%package@ subpackage with its preamble tags
 data Package = Package
   { pkgKey :: !PackageKey,
+    -- | the expanded name
     pkgName :: !Value,
+    -- | span of the @%package@ line, Nothing for the main package
     pkgHeader :: !(Maybe Span),
+    -- | the guard of the @%package@ line
     pkgGuard :: !Guard,
+    -- | tags in source order
     pkgTags :: ![Located TagEntry],
+    -- | True when a preamble line didn't fully expand, so some tags may be
+    -- missing from 'pkgTags'
     pkgOpaque :: !Bool
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | a section such as @%prep@, @%files@ or a scriptlet, with its expanded body
 data SectionContent = SectionContent
   { scKind :: !SectionKind,
+    -- | the package the section belongs to
     scPackage :: !PackageKey,
+    -- | the expanded name of that package
     scPackageName :: !Value,
+    -- | the expanded arguments after the section keyword
     scArgs :: !Value,
+    -- | span of the header line
     scHeader :: !Span,
+    -- | the guard of the header line
     scGuard :: !Guard,
+    -- | expanded body lines in source order
     scLines :: ![Located Value],
+    -- | the CST lines behind 'scLines', in source order
     scRaw :: ![Line]
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | a numbered Source or Patch tag
 data SourceEntry = SourceEntry
-  { srcPatch :: !Bool,
+  { -- | True for Patch, False for Source
+    srcPatch :: !Bool,
+    -- | the number, or the one rpm assigns when the tag has none
     srcNumber :: !Int,
+    -- | whether the number was written in the tag name
     srcExplicit :: !Bool,
+    -- | the expanded URL or file name
     srcValue :: !Value
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | a @%bcond@, @%bcond_with@ or @%bcond_without@ declaration
 data Bcond = Bcond
-  { bcName :: !Text,
+  { -- | the name, @foo@ in @%bcond foo 1@
+    bcName :: !Text,
+    -- | whether the bcond is on, 'Unknown' if that depends on unknown macros
     bcEnabled :: !Tri
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | the result of evaluating one conditional line
 data Condition = Condition
-  { condLineSpan :: !Span,
+  { -- | span of the conditional line
+    condLineSpan :: !Span,
+    -- | the condition's own result, ignoring earlier branches
     condResult :: !Tri
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | everything rozbir knows about a spec for one target
 data Spec = Spec
-  { specPackages :: ![Package],
+  { -- | the main package first, then subpackages in declaration order
+    specPackages :: ![Package],
+    -- | sections in source order
     specSections :: ![SectionContent],
+    -- | Source and Patch tags in source order
     specSources :: ![Located SourceEntry],
+    -- | bcond declarations in source order
     specBconds :: ![Located Bcond],
+    -- | parsed @%changelog@ entries in the order written
     specChangelog :: ![Entry],
+    -- | @%changelog@ lines that didn't parse, with a message
     specChangelogProblems :: ![(Span, Text)],
+    -- | conditional lines that were evaluated. lines after a branch known to
+    -- be taken are skipped.
     specConditions :: ![Condition],
+    -- | the expanded argument of each @%include@
     specIncludes :: ![Located Value],
+    -- | the macro environment at the end of the spec
     specEnv :: !Env,
+    -- | evaluation warnings and errors, including @%include@ files not read
     specMessages :: ![EvalMessage],
+    -- | macros nothing defined. only collected when system macros are loaded.
     specUndefined :: ![(Name, Span)]
   }
   deriving stock (Show, Generic)
 
+-- | inputs to 'resolveWith'
 data ResolveOptions = ResolveOptions
-  { roEnv :: !Env,
+  { -- | the starting macros, from 'newEnv' or 'Rozbir.IO.loadSystemMacros'
+    roEnv :: !Env,
     roTarget :: !Target,
+    -- | @%include@ trees keyed by the argument as written. a missing include
+    -- leaves what it defines unknown.
     roIncludes :: !(Map Text Tree)
   }
 
+-- | an open environment without system macros, 'unknownTarget' and no includes
 defaultOptions :: ResolveOptions
 defaultOptions = ResolveOptions (newEnv False) unknownTarget Map.empty
 
+-- | every preamble tag rpm accepts, as lowercase keys
 knownTags :: [Text]
 knownTags =
   [ "name",
@@ -203,6 +270,7 @@ knownTags =
     "modularitylabel"
   ]
 
+-- | whether a tag also defines a macro, like @Version:@ defines @%version@
 tagDefinesMacro :: Text -> Bool
 tagDefinesMacro k =
   k
@@ -231,6 +299,7 @@ tagDefinesMacro k =
              "modularitylabel"
            ]
 
+-- | tags current rpm ignores or has replaced
 deprecatedTags :: [Text]
 deprecatedTags = ["prereq", "buildprereq", "buildroot", "group", "packager", "vendor", "distribution"]
 
@@ -243,12 +312,15 @@ canonicalTag raw =
         then (base, if T.null digits then Nothing else readMaybe (T.unpack digits))
         else (lower, Nothing)
 
+-- | the main package. 'resolve' always creates one.
 mainPackage :: Spec -> Maybe Package
 mainPackage = L.find ((== MainKey) . pkgKey) . specPackages
 
+-- | every tag with the given lowercase key, in source order
 packageTags :: Text -> Package -> [Located TagEntry]
 packageTags key = filter ((== key) . teKey . locValue) . pkgTags
 
+-- | the first tag with the given lowercase key
 packageTag :: Text -> Package -> Maybe (Located TagEntry)
 packageTag key = L.find ((== key) . teKey . locValue) . pkgTags
 
@@ -275,9 +347,12 @@ data RS = RS
 
 type R = StateT RS Eval
 
+-- | resolve a tree for one target, without @%include@ files. it never fails.
+-- unknown values come back 'Opaque'.
 resolve :: Env -> Target -> Tree -> Spec
 resolve env target = resolveWith (ResolveOptions env target Map.empty)
 
+-- | like 'resolve', but takes @%include@ trees too
 resolveWith :: ResolveOptions -> Tree -> Spec
 resolveWith ResolveOptions {..} tree =
   let env0 = withTarget roTarget roEnv
@@ -488,6 +563,8 @@ source sp key number value = do
   lift (pushMacro (prefix <> T.pack (show n)) (MacroDef Nothing body (OriginTag sp) 0 False))
   lift (pushMacro (prefix <> T.pack (show n) <> "_URL") (MacroDef Nothing (BodyValue value) (OriginTag sp) 0 False))
 
+-- | the package name in a section header's arguments. the 'Bool' is True for a
+-- full @-n@ name and False for a suffix to the main package's name.
 sectionArgWords :: SectionKind -> [Value] -> (Maybe Value, Bool)
 sectionArgWords kind = go Nothing False
   where

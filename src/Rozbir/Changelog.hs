@@ -1,3 +1,4 @@
+-- | parse @%changelog@ entries and write new ones
 module Rozbir.Changelog
   ( Entry (..),
     EntryHeader (..),
@@ -19,20 +20,31 @@ import GHC.Generics (Generic)
 import Rozbir.Syntax (Span)
 import Text.Read (readMaybe)
 
+-- | the parts of an entry's @*@ line
 data EntryHeader = EntryHeader
-  { ehWeekday :: !Text,
+  { -- | the weekday as written, such as @Mon@
+    ehWeekday :: !Text,
+    -- | the date. 'Nothing' when it isn't a real day.
     ehDate :: !(Maybe Day),
+    -- | whether the weekday is right for the date
     ehWeekdayMatches :: !Bool,
+    -- | the author, usually a name and an email
     ehAuthor :: !Text,
+    -- | the version after the author, if there is one
     ehEvr :: !(Maybe Text)
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
+-- | one changelog entry
 data Entry = Entry
-  { entryHeader :: !EntryHeader,
+  { -- | the parsed header. its fields are empty when the header didn't parse.
+    entryHeader :: !EntryHeader,
+    -- | the header line, trimmed
     entryHeaderText :: !Text,
+    -- | where the header line is
     entrySpan :: !Span,
+    -- | the lines after the header, without blank lines
     entryItems :: ![(Span, Text)]
   }
   deriving stock (Eq, Show, Generic)
@@ -53,6 +65,8 @@ weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 months :: [Text]
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
+-- | parse a header such as @* Mon Nov 23 2026 Name \<mail> - 1.0-1@. a time and timezone after the day are allowed.
+-- 'Left' explains what is wrong. a weekday that doesn't match the date is not an error.
 parseHeader :: Text -> Either Text EntryHeader
 parseHeader line = do
   rest <- maybe (Left "a changelog entry starts with '* '") Right (T.stripPrefix "*" line)
@@ -100,6 +114,8 @@ weekdayName = \case
   Saturday -> "Sat"
   Sunday -> "Sun"
 
+-- | group the lines of a @%changelog@ section into entries, and return the problems found.
+-- a header that fails to parse still starts an entry.
 parseEntries :: [(Span, Text)] -> ([Entry], [(Span, Text)])
 parseEntries = go Nothing [] []
   where
@@ -115,12 +131,14 @@ parseEntries = go Nothing [] []
             Nothing -> go cur entries ((sp, "text before the first changelog entry") : problems) rest
     close cur entries = maybe entries (: entries) cur
 
+-- | a date the way rpm writes it, such as @Mon Nov 23 2026@
 renderDate :: Day -> Text
 renderDate d =
   let (y, m, dd) = toGregorian d
       pad n = if n < 10 then "0" <> T.pack (show n) else T.pack (show n)
    in weekdayName (dayOfWeek d) <> " " <> (months !! (m - 1)) <> " " <> pad dd <> " " <> T.pack (show y)
 
+-- | write a new entry from a date, author, optional version and items. items get a @- @ prefix unless they already have one.
 renderEntry :: Day -> Text -> Maybe Text -> [Text] -> Text
 renderEntry day author evr items =
   T.unlines (("* " <> renderDate day <> " " <> author <> maybe "" (" - " <>) evr) : map item items)

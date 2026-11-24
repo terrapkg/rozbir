@@ -1,3 +1,5 @@
+-- | parse rpm macro files such as the ones in @\/usr\/lib\/rpm\/macros.d@,
+-- without reading them from disk.
 module Rozbir.MacroFile
   ( MacroFileEntry (..),
     parseMacroFile,
@@ -10,14 +12,19 @@ import Data.Text qualified as T
 import Rozbir.Syntax (Name)
 import Rozbir.Syntax.Parse (isBlankChar, isNameChar)
 
+-- | one macro definition from a macro file
 data MacroFileEntry = MacroFileEntry
   { mfName :: !Name,
+    -- | options of a parametric macro, without the parentheses
     mfOpts :: !(Maybe Text),
+    -- | the body, unexpanded. continuation lines keep their backslashes and newlines.
     mfBody :: !Text,
+    -- | the line the definition starts on, counting from 1
     mfLine :: !Int
   }
   deriving stock (Eq, Show)
 
+-- | find every definition in a macro file. lines that don't start with @%@ are skipped, and so are definitions with an empty body.
 parseMacroFile :: Text -> [MacroFileEntry]
 parseMacroFile = go 1 . T.splitOn "\n"
   where
@@ -62,5 +69,6 @@ parseMacroFile = go 1 . T.splitOn "\n"
           body = T.dropWhile isBlankChar afterOpts
        in if T.null name || T.null body then Nothing else Just (MacroFileEntry name opts body n)
 
+-- | turn entries into the tuples 'Rozbir.Eval.withMacroFile' takes, tagged with the file they came from
 toDefinitions :: FilePath -> [MacroFileEntry] -> [(Name, Maybe Text, Text, FilePath, Int)]
 toDefinitions path = map (\MacroFileEntry {..} -> (mfName, mfOpts, mfBody, path, mfLine))

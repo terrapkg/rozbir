@@ -1,3 +1,6 @@
+-- | runs lint rules on a spec and drops findings silenced by ignore comments
+-- like @# rozbir: ignore[rule]@. the core and rpmlint rulesets are on by
+-- default, terra is opt-in.
 module Rozbir.Lint
   ( module Rozbir.Lint.Types,
     allRules,
@@ -27,12 +30,15 @@ import Rozbir.Spec (ResolveOptions (..), resolveWith)
 import Rozbir.Syntax
 import Rozbir.Syntax.Render (render, renderFrags)
 
+-- | every rule in every ruleset
 allRules :: [Rule]
 allRules = Core.rules <> Rpmlint.rules <> Terra.rules <> [unusedIgnoreRule]
 
 unusedIgnoreRule :: Rule
 unusedIgnoreRule = Rule "unused-ignore" Core Warn "a rozbir: ignore directive that no longer suppresses anything" (const [])
 
+-- | the rules a config turns on: its rulesets, plus rules given a severity in
+-- 'lcOverrides', minus rules overridden to Nothing
 rulesFor :: LintConfig -> [Rule]
 rulesFor LintConfig {..} =
   [ r
@@ -41,19 +47,25 @@ rulesFor LintConfig {..} =
     Map.lookup (ruleId r) lcOverrides /= Just Nothing
   ]
 
+-- | look up a rule by id
 findRule :: RuleId -> Maybe Rule
 findRule rid = case filter ((== rid) . ruleId) allRules of
   r : _ -> Just r
   [] -> Nothing
 
+-- | a @# rozbir: ignore[...]@ or @# rozbir: ignore-file[...]@ comment
 data Directive = Directive
   { dirSpan :: !Span,
+    -- | True for @ignore-file@, which covers the whole spec
     dirFile :: !Bool,
+    -- | the rule ids it names
     dirRules :: ![RuleId],
+    -- | line numbers it covers, its own and the next line's
     dirCovers :: ![Int]
   }
   deriving stock (Eq, Show)
 
+-- | every ignore comment in a tree
 directives :: Tree -> [Directive]
 directives tree = mapMaybe directive (zip ls (drop 1 (map Just ls) <> [Nothing]))
   where
@@ -76,6 +88,9 @@ directives tree = mapMaybe directive (zip ls (drop 1 (map Just ls) <> [Nothing])
           _ -> Nothing
       _ -> Nothing
 
+-- | run the enabled rules and return findings sorted by position. ignore
+-- comments that silence nothing or name an unknown rule are reported as
+-- @unused-ignore@.
 runLint :: LintConfig -> LintInput -> [Diagnostic]
 runLint cfg li =
   let active = rulesFor cfg
@@ -116,9 +131,12 @@ runLint cfg li =
       Just (Just s) -> s
       _ -> Warn
 
+-- | resolve a tree for each target and lint it. with no targets, rules that
+-- need a resolved spec find nothing.
 lintTree :: LintConfig -> Env -> [Target] -> Map.Map Text Tree -> Tree -> [Diagnostic]
 lintTree cfg env targets includes tree =
   runLint cfg (LintInput (render tree) tree [(t, resolveWith (ResolveOptions env t includes) tree) | t <- targets])
 
+-- | apply a fix to the source text it was made for
 applyFix :: Fix -> Text -> Text
 applyFix f = apply (fixEdits f)

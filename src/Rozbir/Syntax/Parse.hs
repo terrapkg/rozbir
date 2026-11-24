@@ -1,3 +1,5 @@
+-- | the spec parser. it never fails and loses nothing, so @render (parse s) == s@
+-- for any text. problems end up in 'treeErrors' instead.
 module Rozbir.Syntax.Parse
   ( parse,
     parseLines,
@@ -18,12 +20,14 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Rozbir.Syntax
 
+-- | parse a whole spec into a tree
 parse :: Text -> Tree
 parse src =
   let (ls, lineErrs) = parseLines Nothing src
       (nodes, treeErrs) = buildTree ls
    in Tree (groupSections nodes) (lineErrs <> treeErrs)
 
+-- | split text into lines without building the tree. the section decides whether lines can be tags, and positions start at 'startPos'.
 parseLines :: Maybe SectionKind -> Text -> ([Line], [SyntaxError])
 parseLines sec0 src = go sec0 startPos (logicalLines src)
   where
@@ -122,21 +126,26 @@ scanText st0 = fst . T.foldl' step (st0, Normal)
         ']' | xc > 0 -> (Scan pc bc (xc - 1) nc, Normal)
         _ -> (s, Normal)
 
+-- | whitespace other than a newline
 isHSpace :: Char -> Bool
 isHSpace c = c /= '\n' && isSpace c
 
+-- | a space or a tab
 isBlankChar :: Char -> Bool
 isBlankChar c = c == ' ' || c == '\t'
 
+-- | a character allowed in a macro name, which is an ASCII letter, digit or underscore
 isNameChar :: Char -> Bool
 isNameChar c = isAsciiLower c || isAsciiUpper c || isDigit c || c == '_'
 
 isAsciiAlpha :: Char -> Bool
 isAsciiAlpha c = isAsciiLower c || isAsciiUpper c
 
+-- | split off trailing whitespace
 splitTrailing :: Text -> (Text, Text)
 splitTrailing t = let tr = T.takeWhileEnd isHSpace t in (T.dropEnd (T.length tr) t, tr)
 
+-- | work out what one line is, given the section it is in. the text must not include the line ending.
 classifyLine :: Maybe SectionKind -> Text -> LineBody
 classifyLine sec body
   | T.null rest = Blank body
@@ -286,6 +295,7 @@ tagLine indent t = do
             tagTrailing = trailing
           }
 
+-- | split text into literal text and macros. an unclosed macro takes the rest of the text.
 parseFrags :: Text -> [Frag]
 parseFrags = mergeLits . go
   where
@@ -344,6 +354,8 @@ mergeLits = \case
       Expr fs -> Expr (mergeLits fs)
       m -> m
 
+-- | for text starting with an opening character, return what is inside the matching close and what comes after it.
+-- nesting and backslash escapes are respected. 'Nothing' when it is never closed.
 matchClose :: Char -> Char -> Text -> Maybe (Text, Text)
 matchClose open close t = go (0 :: Int) 0 (T.unpack t)
   where

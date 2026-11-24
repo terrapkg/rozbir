@@ -1,3 +1,7 @@
+-- | partial evaluation of rpm macros and conditionals, following rpm's own
+-- rules. it never runs a shell or Lua. anything that would need to becomes an
+-- 'Opaque' hole, and conditions that can't be decided run every branch and
+-- merge the results.
 module Rozbir.Eval
   ( module Rozbir.Eval.Types,
     Eval,
@@ -47,34 +51,48 @@ import Rozbir.Syntax.Expr (boolify, evalExpr, itemsFromFrags, itemsFromValue, re
 import Rozbir.Syntax.Parse (isBlankChar, isNameChar, matchClose, parseFrags)
 import Rozbir.Syntax.Render (renderFrags, renderMacro)
 
+-- | evaluator state
 data EvalState = EvalState
   { esEnv :: !Env,
     esLevel :: !Int,
+    -- | lookups left before giving up with 'DepthLimit'
     esFuel :: !Int,
+    -- | messages so far, newest first
     esMessages :: ![EvalMessage],
     esSpan :: !(Maybe Span),
+    -- | undefined macros used in a closed env, newest first
     esUndefined :: ![(Name, Span)]
   }
   deriving stock (Show)
 
+-- | the evaluation monad. it's pure, with no IO.
 type Eval = State EvalState
 
+-- | the result of looking up a macro name
 data Lookup
   = Found MacroDef
-  | IsBuiltin Builtin
-  | NotFound
-  | Unsure Reason
+  | -- | a builtin, which wins over definitions
+    IsBuiltin Builtin
+  | -- | definitely not defined
+    NotFound
+  | -- | might be defined
+    Unsure Reason
   deriving stock (Show)
 
+-- | the nesting limit, the same as rpm's
 maxDepth :: Int
 maxDepth = 64
 
+-- | a fresh state for an environment
 initialState :: Env -> EvalState
 initialState env = EvalState env 0 2000000 [] Nothing []
 
+-- | run an evaluation
 runEval :: EvalState -> Eval a -> (a, EvalState)
 runEval st act = runState act st
 
+-- | an environment with only rpm's built-in macros. 'True' makes it closed,
+-- meaning system macros are already loaded.
 newEnv :: Bool -> Env
 newEnv closed = L.foldl' build (L.foldl' add (Env Map.empty closed) preludeMacros) buildTimeMacros
   where
@@ -95,6 +113,7 @@ buildTimeMacros =
 pushDef :: Name -> MacroDef -> Env -> Env
 pushDef name def env = env {envMacros = Map.insertWith (<>) name [def] (envMacros env)}
 
+-- | apply a target. its macros replace any existing definitions.
 withTarget :: Target -> Env -> Env
 withTarget Target {..} env0 = L.foldl' apply env0 (archMacros <> osMacros <> targetMacros)
   where
@@ -102,6 +121,7 @@ withTarget Target {..} env0 = L.foldl' apply env0 (archMacros <> osMacros <> tar
     osMacros = maybe [] (\o -> [("_target_os", Just o), ("_os", Just o), ("_build_os", Just o)]) targetOs
     apply env (name, value) = env {envMacros = Map.insert name [MacroDef Nothing (maybe BodyUndefined BodyRaw value) OriginTarget 0 False] (envMacros env)}
 
+-- | add definitions from a macro file, as name, options, body, file and line
 withMacroFile :: [(Name, Maybe Text, Text, FilePath, Int)] -> Env -> Env
 withMacroFile defs env0 = L.foldl' (\env (n, o, b, f, l) -> pushDef n (MacroDef o (BodyRaw (macroFileBody b)) (OriginFile f l) 0 False) env) env0 defs
 
@@ -110,15 +130,19 @@ macroFileBody b = case T.uncons b of
   Just ('{', _) | Just (inner, _) <- matchClose '{' '}' b -> inner
   _ -> fst (freeField b)
 
+-- | the current environment
 getEnv :: Eval Env
 getEnv = gets esEnv
 
+-- | replace the environment
 putEnv :: Env -> Eval ()
 putEnv env = modify' (\s -> s {esEnv = env})
 
+-- | the source location being evaluated
 currentSpan :: Eval (Maybe Span)
 currentSpan = gets esSpan
 
+-- | run with a source location, restoring the old one after
 atSpan :: Span -> Eval a -> Eval a
 atSpan sp act = do
   old <- gets esSpan
@@ -127,11 +151,14 @@ atSpan sp act = do
   modify' (\s -> s {esSpan = old})
   pure r
 
+-- | record a message at the current location
 message :: Severity -> Text -> Eval ()
 message sev txt = do
   sp <- gets esSpan
   modify' (\s -> s {esMessages = EvalMessage sev sp txt : esMessages s})
 
+-- | look up a name. in an open env, a missing name is 'Unsure' unless only the
+-- spec could define it, like tags and macro arguments.
 lookupMacro :: Name -> Eval Lookup
 lookupMacro name
   | Just b <- builtinNamed name = pure (IsBuiltin b)
@@ -154,6 +181,7 @@ isKeyword n =
     || n `elem` ["if", "ifarch", "ifnarch", "ifos", "ifnos", "elif", "elifarch", "elifos", "else", "endif", "include"]
     || n `elem` ["doc", "docdir", "dir", "ghost", "config", "lang", "attr", "defattr", "exclude", "caps", "verify", "readme", "artifact", "pubkey", "missingok"]
 
+-- | whether a name is defined
 isDefined :: Name -> Eval Tri
 isDefined name =
   lookupMacro name >>= \case
@@ -162,20 +190,26 @@ isDefined name =
     NotFound -> pure No
     Unsure r -> pure (Unknown [r])
 
+-- | add a definition, like @%define@
 pushMacro :: Name -> MacroDef -> Eval ()
 pushMacro name def = modify' (\s -> s {esEnv = pushDef name def (esEnv s)})
 
+-- | remove the newest definition
 popMacro :: Name -> Eval ()
 popMacro name = modify' $ \s ->
   let env = esEnv s
    in s {esEnv = env {envMacros = Map.update (\case _ : rest | not (null rest) -> Just rest; _ -> Nothing) name (envMacros env)}}
 
+-- | define a macro with known text at the current depth
 defineAuto :: Name -> Text -> Eval ()
 defineAuto name body = do
   lvl <- gets esLevel
   sp <- gets esSpan
   pushMacro name (MacroDef Nothing (BodyValue (known body)) (maybe OriginAuto OriginTag sp) lvl False)
 
+-- | merge the environments of branches that couldn't be decided. a macro they
+-- disagree on becomes 'Ambiguous', and one only some define becomes maybe
+-- defined.
 mergeEnvs :: Env -> Env -> Env
 mergeEnvs a b =
   Env
@@ -253,9 +287,11 @@ spend = do
     then pure False
     else modify' (\s -> s {esFuel = fuel - 1}) >> pure True
 
+-- | expand text, like @rpm --eval@
 expandText :: Text -> Eval Value
 expandText t = expandAt 0 (parseFrags t)
 
+-- | expand fragments at a depth, attaching the current location to holes
 expandAt :: Int -> [Frag] -> Eval Value
 expandAt d fs = do
   sp <- gets esSpan
@@ -265,6 +301,8 @@ expandAt d fs = do
 attachSpan :: Maybe Span -> Value -> Value
 attachSpan sp (Value ps) = Value [case p of Opaque r Nothing -> Opaque r sp; _ -> p | p <- ps]
 
+-- | expand fragments at a depth. an undefined macro in a closed env stays as
+-- literal text, like rpm.
 expandFrags :: Int -> [Frag] -> Eval Value
 expandFrags d = go
   where
@@ -276,6 +314,8 @@ expandFrags d = go
         (v, rest') <- expandMacro d m rest
         (v <>) <$> go rest'
 
+-- | expand a value's known text again, like @%{expand:...}@. if a hole might
+-- split a macro, the result is just that hole.
 expandValue :: Int -> Value -> Eval Value
 expandValue d v@(Value ps)
   | not (isKnown v) && any splitsMacro ps = pure (Value [o | o@(Opaque {}) <- take 1 [x | x@(Opaque {}) <- ps]])
@@ -640,6 +680,8 @@ define d isGlobal handleOpts whole t0 = do
       Just (c, more) | c == open, (inner, after) <- T.break (== close) more, not (T.null after) -> (Just inner, T.drop 1 after)
       _ -> (Nothing, t)
 
+-- | split a free-form macro body from the rest, like rpm. backslashes escape
+-- the next character and are dropped.
 freeField :: Text -> (Text, Text)
 freeField t = go (0 :: Int) (0 :: Int) (0 :: Int) [] (T.unpack t)
   where
@@ -665,6 +707,8 @@ freeField t = go (0 :: Int) (0 :: Int) (0 :: Int) [] (T.unpack t)
         | c == ']' && xc > 0 -> go bc pc (xc - 1) (c : acc) cs
         | otherwise -> go bc pc xc (c : acc) cs
 
+-- | evaluate an @%if@, @%ifarch@ or @%ifos@ line. a bad expression records an
+-- error and gives 'Unknown'.
 evalCond :: CondLine -> Eval Tri
 evalCond CondLine {..} = case condKind of
   CElse -> pure Yes

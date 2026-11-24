@@ -1,3 +1,6 @@
+-- | the core ruleset: syntax errors, missing or duplicate tags, bad
+-- changelogs, evaluation errors and other things rpm itself trips on. on by
+-- default.
 module Rozbir.Lint.Core (rules) where
 
 import Data.Char (isDigit)
@@ -15,6 +18,7 @@ import Rozbir.Spec
 import Rozbir.Syntax
 import Rozbir.Syntax.Render (lineFrags, macroSpans, renderFrags, renderMacro)
 
+-- | every core rule
 rules :: [Rule]
 rules =
   syntaxRules

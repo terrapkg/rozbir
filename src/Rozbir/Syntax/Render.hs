@@ -1,3 +1,5 @@
+-- | turn the syntax tree back into text, exactly as it was parsed. it also maps
+-- fragments back to their source spans.
 module Rozbir.Syntax.Render
   ( render,
     renderNodes,
@@ -21,39 +23,50 @@ import Data.Text.Lazy qualified as TL
 import Data.Text.Lazy.Builder (Builder, fromText, singleton, toLazyText)
 import Rozbir.Syntax
 
+-- | the original source of a tree
 render :: Tree -> Text
 render = renderNodes . treeNodes
 
+-- | the source of some nodes, line endings included
 renderNodes :: [Node] -> Text
 renderNodes = TL.toStrict . toLazyText . foldMap lineB . linesOfNodes
 
 lineB :: Line -> Builder
 lineB l = bodyB (lineBody l) <> fromText (lineEol l)
 
+-- | the source of a line, its ending included
 renderLine :: Line -> Text
 renderLine = TL.toStrict . toLazyText . lineB
 
+-- | the source of a line without its ending
 renderBody :: LineBody -> Text
 renderBody = TL.toStrict . toLazyText . bodyB
 
+-- | the source of some fragments
 renderFrags :: [Frag] -> Text
 renderFrags = TL.toStrict . toLazyText . fragsB
 
+-- | the source of a fragment
 renderFrag :: Frag -> Text
 renderFrag = TL.toStrict . toLazyText . fragB
 
+-- | the source of a macro reference
 renderMacro :: MacroRef -> Text
 renderMacro = TL.toStrict . toLazyText . macroB
 
+-- | a tag's value as written, unexpanded
 renderTagValue :: TagLine -> Text
 renderTagValue = renderFrags . tagValue
 
+-- | a define's body as written, unexpanded
 renderDefineBody :: DefineLine -> Text
 renderDefineBody = renderFrags . defBody
 
+-- | the condition after the keyword, leading whitespace included
 renderCondArgs :: CondLine -> Text
 renderCondArgs = renderFrags . condArgs
 
+-- | the arguments after a section keyword, leading whitespace included
 renderSectionArgs :: SectionHeader -> Text
 renderSectionArgs = renderFrags . secArgs
 
@@ -111,11 +124,13 @@ macroB = \case
       ColonArg fs -> singleton ':' <> fragsB fs
       SpaceArg fs -> fragsB fs
 
+-- | pair each fragment with its span, given where the first one starts
 fragSpans :: Pos -> [Frag] -> [(Span, Frag)]
 fragSpans p = \case
   [] -> []
   f : fs -> let e = advancePos p (renderFrag f) in (Span p e, f) : fragSpans e fs
 
+-- | every macro in some fragments with its span, given where they start. macros nested in arguments, @%(...)@ and @%[...]@ are included after the macro that holds them.
 macroSpans :: Pos -> [Frag] -> [(Span, MacroRef)]
 macroSpans p fs = concat [(sp, m) : inner sp m | (sp, Macro m) <- fragSpans p fs]
   where
@@ -129,6 +144,7 @@ macroSpans p fs = concat [(sp, m) : inner sp m | (sp, Macro m) <- fragSpans p fs
       Expr xs -> macroSpans (advancePos s "%[") xs
       _ -> []
 
+-- | the fragments of a line with where they start. blank and bogus lines have none.
 lineFrags :: Line -> [(Pos, [Frag])]
 lineFrags l = case lineBody l of
   Comment indent fs -> [(at indent, fs)]

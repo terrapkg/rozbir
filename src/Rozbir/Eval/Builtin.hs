@@ -1,3 +1,5 @@
+-- | rpm's builtin macros and the pure string helpers behind them, plus the
+-- macros rozbir copies from rpm's @macros.in@. nothing here runs a shell or Lua.
 module Rozbir.Eval.Builtin
   ( Builtin (..),
     builtinNamed,
@@ -34,47 +36,67 @@ import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8Lenient, encodeUtf8)
 import Text.Read (readMaybe)
 
+-- | a builtin macro from rpm's @builtinmacros[]@
 data Builtin
-  = BP
-  | BS
+  = -- | @%{P:n}@, the same as @%PATCHn@
+    BP
+  | -- | @%{S:n}@, the same as @%SOURCEn@
+    BS
   | BBasename
   | BDefine
   | BDirname
-  | BDnl
-  | BDump
-  | BEcho
-  | BError
-  | BExists
+  | -- | @%dnl@, which drops the rest of the line
+    BDnl
+  | -- | @%dump@, which expands to nothing
+    BDump
+  | -- | @%{echo:...}@, which records an info message
+    BEcho
+  | -- | @%{error:...}@, which records an error and gives a 'Failed' hole
+    BError
+  | -- | @%{exists:...}@, which reads the filesystem
+    BExists
   | BExpand
   | BExprFn
-  | BGetconfdir
-  | BGetenv
-  | BGetncpus
+  | -- | @%{getconfdir}@, always @\/usr\/lib\/rpm@
+    BGetconfdir
+  | -- | @%{getenv:...}@, which reads the environment
+    BGetenv
+  | -- | @%{getncpus}@, which depends on the build host
+    BGetncpus
   | BGlobal
-  | BGsub
-  | BLen
-  | BLoad
+  | -- | @%{gsub:...}@, using Lua patterns
+    BGsub
+  | -- | @%{len:...}@, the length in bytes
+    BLen
+  | -- | @%{load:...}@, which reads the filesystem
+    BLoad
   | BLower
-  | BLua
+  | -- | @%{lua:...}@, which is never run
+    BLua
   | BMacrobody
   | BQuote
   | BRep
   | BReverse
-  | BRpmversion
+  | -- | @%{rpmversion}@, which depends on the build host
+    BRpmversion
   | BShrink
   | BSpan
   | BSub
   | BSuffix
-  | BTrace
+  | -- | @%trace@, which expands to nothing
+    BTrace
   | BU2p
   | BShescape
-  | BUncompress
+  | -- | @%{uncompress:...}@, which expands to the uncompress command
+    BUncompress
   | BUndefine
   | BUpper
   | BUrl2path
   | BVerbose
-  | BWarn
-  | BXdg
+  | -- | @%{warn:...}@, which records a warning
+    BWarn
+  | -- | @%{xdg:...}@, which reads the environment
+    BXdg
   deriving stock (Eq, Show, Enum, Bounded)
 
 builtinTable :: [(Text, Builtin)]
@@ -121,15 +143,27 @@ builtinTable =
     ("xdg", BXdg)
   ]
 
+-- | the builtin with this name, if there is one
 builtinNamed :: Text -> Maybe Builtin
 builtinNamed n = snd <$> find ((== n) . fst) builtinTable
 
+-- | every builtin name
 builtinNames :: [Text]
 builtinNames = map fst builtinTable
 
-data ArgStyle = TakesNoArgs | TakesArgs | TakesOptionalArgs | ParsesRaw
+-- | how a builtin takes its arguments
+data ArgStyle
+  = -- | ignores arguments
+    TakesNoArgs
+  | -- | takes expanded arguments
+    TakesArgs
+  | -- | takes expanded arguments, but works without any
+    TakesOptionalArgs
+  | -- | reads the unexpanded text itself, like @%define@
+    ParsesRaw
   deriving stock (Eq, Show)
 
+-- | how a builtin takes its arguments
 builtinArgStyle :: Builtin -> ArgStyle
 builtinArgStyle = \case
   BDefine -> ParsesRaw
@@ -144,6 +178,8 @@ builtinArgStyle = \case
   BGetncpus -> TakesOptionalArgs
   _ -> TakesArgs
 
+-- | macros copied from rpm's @macros.in@ that every env starts with, like
+-- @%with@ and @%bcond@, as name, options and body
 preludeMacros :: [(Text, Maybe Text, Text)]
 preludeMacros =
   [ ("nil", Nothing, "%{!?nil}"),
@@ -161,9 +197,12 @@ preludeMacros =
     ("without", Just "", "%{expand:%%{?with_%{1}:0}%%{!?with_%{1}:1}}")
   ]
 
+-- | name prefixes only a spec can define, like @with_@ and @SOURCE@. these are
+-- never left as 'Rozbir.Eval.Types.Undefined' holes.
 closedPrefixes :: [Text]
 closedPrefixes = ["with_", "_with_", "_without_", "bcond_override_default_", "SOURCE", "PATCH"]
 
+-- | names only a spec can define, like @name@ and @version@
 closedNames :: [Text]
 closedNames =
   [ "name",
@@ -181,18 +220,21 @@ closedNames =
     "upstreamreleases"
   ]
 
+-- | whether a name is a macro argument, like @1@, @*@, @#@ or @-f@
 isAutoName :: Text -> Bool
 isAutoName n = case T.uncons n of
   Just ('-', _) -> True
   Just (c, _) | isDigit c -> True
   _ -> n `elem` ["*", "**", "#"]
 
+-- | the last path component, like POSIX @basename@
 posixBasename :: Text -> Text
 posixBasename t
   | T.null t = "."
   | T.all (== '/') t = "/"
   | otherwise = T.takeWhileEnd (/= '/') (T.dropWhileEnd (== '/') t)
 
+-- | everything but the last path component, like POSIX @dirname@
 posixDirname :: Text -> Text
 posixDirname t
   | T.null t = "."
@@ -205,17 +247,21 @@ posixDirname t
             | T.all (== '/') parent -> "/"
             | otherwise -> T.dropWhileEnd (== '/') parent
 
+-- | trim whitespace and squeeze runs of it into single spaces
 shrink :: Text -> Text
 shrink = T.unwords . T.words
 
+-- | single-quote each argument for a shell and join them with spaces
 shescape :: [Text] -> Text
 shescape = T.unwords . map (\a -> "'" <> T.replace "'" "'\\''" a <> "'")
 
+-- | the text after the last dot, or empty if there's no dot
 suffix :: Text -> Text
 suffix t = case T.breakOnEnd "." t of
   ("", _) -> ""
   (_, s) -> s
 
+-- | the path part of a URL, or the text itself if it isn't a URL
 urlPath :: Text -> Text
 urlPath t = case T.breakOn "://" t of
   (_, "") -> nonEmpty t
@@ -226,9 +272,11 @@ urlPath t = case T.breakOn "://" t of
     nonEmpty p = if T.null p then "/" else p
     isUrlScheme s = s `elem` ["ftp", "http", "https", "hkp", "file"]
 
+-- | the length in UTF-8 bytes, like Lua's @string.len@
 luaLen :: Text -> Text
 luaLen = T.pack . show . BS.length . encodeUtf8
 
+-- | Lua's @string.rep@ on the arguments. 'Nothing' for bad arguments.
 luaRep :: [Text] -> Maybe Text
 luaRep = \case
   [s, n] -> (\k -> T.replicate k s) <$> count n
@@ -237,6 +285,8 @@ luaRep = \case
   where
     count n = max 0 <$> readMaybe (T.unpack n)
 
+-- | Lua's @string.sub@ on the arguments, counting UTF-8 bytes. 'Nothing' for
+-- bad arguments.
 luaSub :: [Text] -> Maybe Text
 luaSub = \case
   [s] -> Just s
@@ -252,9 +302,12 @@ luaSub = \case
           end = min len (norm j)
        in if start > end then "" else decodeUtf8Lenient (BS.take (end - start + 1) (BS.drop (start - 1) bytes))
 
+-- | reverse the UTF-8 bytes, like Lua's @string.reverse@
 luaReverse :: Text -> Text
 luaReverse = decodeUtf8Lenient . BS.reverse . encodeUtf8
 
+-- | split macro arguments on blanks, keeping @%{quote:...}@ text as one
+-- argument
 splitQuoted :: Text -> [Text]
 splitQuoted = go False "" [] . T.unpack
   where
@@ -266,12 +319,18 @@ splitQuoted = go False "" [] . T.unpack
         | otherwise -> go quoted (c : cur) acc rest
     flush cur acc = if null cur then acc else T.pack (reverse cur) : acc
 
+-- | the result of 'getopt'
 data GetoptResult = GetoptResult
-  { goOptions :: [(Char, Maybe Text)],
+  { -- | options in order, with their values
+    goOptions :: [(Char, Maybe Text)],
+    -- | the remaining arguments
     goArgs :: [Text]
   }
   deriving stock (Eq, Show)
 
+-- | parse macro arguments with a getopt option string, like rpm. options can
+-- appear anywhere and @--@ ends them. an unknown option or a missing value
+-- gives 'Left' with the option letter.
 getopt :: Text -> [Text] -> Either Char GetoptResult
 getopt spec args
   | spec == "-" = Right (GetoptResult [] args)
@@ -297,8 +356,10 @@ getopt spec args
             [] -> Left c
         | otherwise -> cluster ((c, Nothing) : opts) pos cs rest
 
+-- | uppercase ASCII letters, leaving the rest alone
 asciiUpper :: Text -> Text
 asciiUpper = T.map (\c -> if isAsciiLower c then toUpper c else c)
 
+-- | lowercase ASCII letters, leaving the rest alone
 asciiLower :: Text -> Text
 asciiLower = T.map (\c -> if isAsciiUpper c then toLower c else c)

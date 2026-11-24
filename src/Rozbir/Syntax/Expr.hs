@@ -1,3 +1,6 @@
+-- | rpm's expression language, used by @%if@, @%[...]@ and @%{expr:...}@.
+-- values that aren't known make the result unknown, unless the rest of the
+-- expression decides it anyway, like @0 && x@.
 module Rozbir.Syntax.Expr
   ( Item (..),
     ExprValue (..),
@@ -20,11 +23,15 @@ import Rozbir.Syntax (Frag (..), MacroRef)
 import Rozbir.Version (compareVersionLiteral, parseVersionLiteral)
 import Text.Read (readMaybe)
 
+-- | one unit of expression input
 data Item
   = IChar !Char
-  | IOpaque !Reason
-  | IMacro !MacroRef
+  | -- | a part of the input that isn't known
+    IOpaque !Reason
+  | -- | a macro that hasn't been expanded yet
+    IMacro !MacroRef
 
+-- | input from an expanded value
 itemsFromValue :: Value -> [Item]
 itemsFromValue (Value ps) = concatMap piece ps
   where
@@ -32,19 +39,25 @@ itemsFromValue (Value ps) = concatMap piece ps
       Known t -> map IChar (T.unpack t)
       Opaque r _ -> [IOpaque r]
 
+-- | input from unexpanded text, with macros kept for later
 itemsFromFrags :: [Frag] -> [Item]
 itemsFromFrags = concatMap $ \case
   Lit t -> map IChar (T.unpack t)
   Escape -> [IChar '%', IChar '%']
   Macro m -> [IMacro m]
 
+-- | the result of an expression
 data ExprValue
   = EInt !Integer
-  | EStr !Text
-  | EVer !Text
-  | EUnknown ![Reason]
+  | -- | a string from @\"...\"@
+    EStr !Text
+  | -- | a version from @v\"...\"@
+    EVer !Text
+  | -- | a value that isn't known, with why
+    EUnknown ![Reason]
   deriving stock (Eq, Show)
 
+-- | turn a result back into text, the way rpm prints it
 renderExprValue :: ExprValue -> Value
 renderExprValue = \case
   EInt i -> known (T.pack (show i))
@@ -52,6 +65,7 @@ renderExprValue = \case
   EVer v -> known v
   EUnknown rs -> Value [Opaque r Nothing | r <- take 1 (rs <> [Failed "unknown"])]
 
+-- | whether a result counts as true. zero and empty strings are false.
 boolify :: ExprValue -> Tri
 boolify = \case
   EInt i -> if i /= 0 then Yes else No
@@ -125,6 +139,8 @@ tokenize expand expandRef = go
 
 type P m = StateT ([Tok m], Bool) (ExceptT Text m)
 
+-- | evaluate an expression. 'Left' is a syntax or type error, with rpm's message.
+-- when the flag is set, macros are expanded with the function only if they are needed, like rpm does for @%[...]@. otherwise a macro in the input is an error.
 evalExpr :: (Monad m) => Bool -> (MacroRef -> m Value) -> [Item] -> m (Either Text ExprValue)
 evalExpr expand expandRef items = case tokenize expand expandRef items of
   Left e -> pure (Left e)

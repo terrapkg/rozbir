@@ -110,9 +110,12 @@ fragsWithSpans p = \case
 
 mixedTabs :: LintInput -> [Diagnostic]
 mixedTabs li = case (firstWith '\t', firstWith ' ') of
-  (Just (tl, _), Just (sl, _)) ->
-    let (later, other, kind) = if posOffset (spanStart (lineSpan tl)) > posOffset (spanStart (lineSpan sl)) then (tl, sl, "tabs") else (sl, tl, "spaces")
-     in [diag "mixed-tabs-spaces" (lineSpan later) ("this line aligns with " <> kind <> ", but line " <> lineNo other <> " uses the other")]
+  (Just (tl, _), Just (sl, _))
+    | lineSpan tl == lineSpan sl ->
+        [diag "mixed-tabs-spaces" (lineSpan tl) "this line lines up its value with both tabs and spaces"]
+    | otherwise ->
+        let (later, other, kind, otherKind) = if posOffset (spanStart (lineSpan tl)) > posOffset (spanStart (lineSpan sl)) then (tl, sl, "tabs", "spaces") else (sl, tl, "spaces", "tabs")
+         in [diag "mixed-tabs-spaces" (lineSpan later) ("this line lines up its value with " <> kind <> ", but line " <> lineNo other <> " uses " <> otherKind)]
   _ -> []
   where
     alignment l = case lineBody l of
@@ -145,8 +148,8 @@ mixedBuildroot li =
    in if null macros || null vars
         then []
         else
-          let (minority, word) = if length vars <= length macros then (vars, "$RPM_BUILD_ROOT") else (macros, "%{buildroot}")
-           in [diag "mixed-buildroot" sp ("the spec mostly uses the other spelling, but this is " <> word) | sp <- take 1 minority]
+          let (minority, word, usual) = if length vars <= length macros then (vars, "$RPM_BUILD_ROOT", "%{buildroot}") else (macros, "%{buildroot}", "$RPM_BUILD_ROOT")
+           in [diag "mixed-buildroot" sp ("this uses " <> word <> ", but the rest of the spec uses " <> usual) | sp <- take 1 minority]
 
 buildrootUsage :: LintInput -> [Diagnostic]
 buildrootUsage li =

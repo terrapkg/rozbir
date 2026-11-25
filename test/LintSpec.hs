@@ -77,6 +77,7 @@ spec = describe "Rozbir.Lint" $ do
   fixes "summary-ended-with-dot" "Summary: A thing.\n" "Summary: A thing\n"
   catches "make-check-outside-check-section" (withBase ["%build", "make check"])
   catches "mixed-tabs-spaces" "Name:\tx\nVersion:  1\n"
+  catches "mixed-tabs-spaces" "Name:\t  x\n"
   catches "terra-packager" "Name: x\n"
   catches "terra-dist-release" "Release: 1\n"
   fixes "terra-dist-release" "Release: 1\n" "Release: 1%{?dist}\n"

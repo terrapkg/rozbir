@@ -9,6 +9,8 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Time.Calendar (Day)
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import Rozbir.Changelog (Entry (..), EntryHeader (..))
 import Rozbir.Edit (TextEdit (..))
 import Rozbir.Eval.Types
@@ -205,13 +207,19 @@ changelogDate li =
   nub $
     concat
       [ [diag "changelog-date" sp msg | (sp, msg) <- specChangelogProblems spec]
-          <> [ diag "changelog-date" (entrySpan e) ("the date isn't a " <> ehWeekday (entryHeader e))
+          <> [ diag "changelog-date" (entrySpan e) (formatDay day <> " was a " <> weekdayAbbrev day <> ", not a " <> ehWeekday (entryHeader e))
              | e <- specChangelog spec,
-               Just _ <- [ehDate (entryHeader e)],
+               Just day <- [ehDate (entryHeader e)],
                not (ehWeekdayMatches (entryHeader e))
              ]
       | spec <- firstSpec li
       ]
+
+formatDay :: Day -> Text
+formatDay = T.pack . formatTime defaultTimeLocale "%b %-d %Y"
+
+weekdayAbbrev :: Day -> Text
+weekdayAbbrev = T.pack . formatTime defaultTimeLocale "%a"
 
 changelogOrder :: LintInput -> [Diagnostic]
 changelogOrder li =

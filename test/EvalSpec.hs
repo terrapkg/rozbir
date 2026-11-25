@@ -46,6 +46,11 @@ spec = describe "Rozbir.Eval" $ do
     it "is opaque about shell and Lua" $ do
       open ["%(date)"] `shouldBe` opaque RunsShell
       open ["%{lua: print(1)}"] `shouldBe` opaque RunsLua
+    it "can't rule out macros defined by Lua it can't read" $ do
+      closed ["%{lua: local go = require \"fedora.srpm.go\" go.meta()}", "%{goname}"] `shouldBe` opaque RunsLua
+      closed ["%{lua: rpm.define(name .. \" 1\")}", "%{goname}"] `shouldBe` opaque RunsLua
+    it "still leaves undefined macros alone after Lua that only defines literal names" $
+      closed ["%{lua: rpm.define(\"a 1\")}", "%{nope}"] `shouldBe` known "%{nope}"
     it "stops runaway recursion" $
       open ["%define a %{a}", "%{a}"] `shouldBe` opaque DepthLimit
   describe "parametric macros" $ do

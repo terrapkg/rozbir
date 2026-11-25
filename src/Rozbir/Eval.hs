@@ -94,7 +94,7 @@ runEval st act = runState act st
 -- | an environment with only rpm's built-in macros. 'True' makes it closed,
 -- meaning system macros are already loaded.
 newEnv :: Bool -> Env
-newEnv closed = L.foldl' build (L.foldl' add (Env Map.empty closed) preludeMacros) buildTimeMacros
+newEnv closed = L.foldl' build (L.foldl' add (Env Map.empty closed False) preludeMacros) buildTimeMacros
   where
     add env (name, opts, body) = pushDef name (MacroDef opts (BodyRaw body) OriginPrelude 0 False) env
     build env (name, body) = pushDef name (MacroDef Nothing body OriginPrelude 0 False) env
@@ -163,7 +163,7 @@ lookupMacro :: Name -> Eval Lookup
 lookupMacro name
   | Just b <- builtinNamed name = pure (IsBuiltin b)
   | otherwise = do
-      EvalState {esEnv = Env macros closed, esLevel = lvl} <- get
+      EvalState {esEnv = Env macros closed luaDefined, esLevel = lvl} <- get
       pure $ case Map.lookup name macros of
         Just (m : _)
           | macroAuto m && lvl > macroLevel m -> NotFound
@@ -172,7 +172,9 @@ lookupMacro name
               BodyMaybe r -> Unsure r
               _ -> Found m
         _
-          | closed || isAutoName name || name `elem` closedNames || isKeyword name || any (`T.isPrefixOf` name) closedPrefixes -> NotFound
+          | isAutoName name || name `elem` closedNames || isKeyword name || any (`T.isPrefixOf` name) closedPrefixes -> NotFound
+          | luaDefined -> Unsure RunsLua
+          | closed -> NotFound
           | otherwise -> Unsure (Undefined name)
 
 isKeyword :: Name -> Bool
@@ -221,6 +223,7 @@ mergeEnvs a b =
         (envMacros b)
     )
     (envClosed a && envClosed b)
+    (envLuaDefined a || envLuaDefined b)
   where
     conflict k s1 s2 =
       let top1 = defined s1
@@ -242,11 +245,21 @@ mergeEnvs a b =
       _ -> False
 
 luaDefines :: Text -> Eval ()
-luaDefines src = mapM_ maybeDefined (luaDefinedNames src)
+luaDefines src = do
+  when (luaDefinesUnknownNames src) $
+    modify' (\s -> s {esEnv = (esEnv s) {envLuaDefined = True}})
+  mapM_ maybeDefined (luaDefinedNames src)
   where
     maybeDefined n = do
       lvl <- gets esLevel
       pushMacro n (MacroDef Nothing (BodyMaybe RunsLua) OriginAuto lvl False)
+
+luaDefinesUnknownNames :: Text -> Bool
+luaDefinesUnknownNames src = "require" `T.isInfixOf` src || any (not . literalAfter 10) (T.breakOnAll "rpm.define" src) || any (not . literalAfter 7) (T.breakOnAll "macros[" src)
+  where
+    literalAfter n (_, rest) = case T.uncons (T.dropWhile (`elem` [' ', '(']) (T.drop n rest)) of
+      Just (c, _) -> c == '"' || c == '\''
+      Nothing -> False
 
 luaDefinedNames :: Text -> [Name]
 luaDefinedNames src = filter (not . T.null) (defines <> assigns <> indexed)

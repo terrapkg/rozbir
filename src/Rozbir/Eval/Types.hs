@@ -294,7 +294,9 @@ data Env = Env
   { -- | a stack of definitions per name, newest first
     envMacros :: !(Map Name [MacroDef]),
     -- | whether system macros are loaded. if not, unknown names become 'Undefined' holes instead of literal text.
-    envClosed :: !Bool
+    envClosed :: !Bool,
+    -- | whether Lua ran that could have defined macros rozbir can't name. if so, unknown names might be defined even in a closed env.
+    envLuaDefined :: !Bool
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)

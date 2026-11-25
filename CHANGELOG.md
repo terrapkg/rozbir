@@ -1,5 +1,10 @@
 # Revision history for rozbir
 
+## 0.1.0.1 -- 11/24/2026
+
+- reword some lint diagnostics
+- fix a lua parsing bug
+
 ## 0.1.0.0 -- 11/24/2026
 
 - first version: lossless spec parser, partial evaluator with a pure

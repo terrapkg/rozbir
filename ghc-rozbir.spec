@@ -5,7 +5,7 @@
 %bcond tests 1
 
 Name:           ghc-%{pkg_name}
-Version:        0.1.0.0
+Version:        0.1.0.1
 Release:        1%{?dist}
 Summary:        Parse, evaluate, edit and lint RPM spec files
 

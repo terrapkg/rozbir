@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            rozbir
-version:         0.1.0.0
+version:         0.1.0.1
 synopsis:        parse, evaluate, edit and lint RPM spec files
 description:
   rozbir is a pure library for RPM spec files. it parses them into a
